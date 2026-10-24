@@ -32,6 +32,14 @@ function App(){
   const [profile,setProfile]=useState({name:'Trader',email:'',phone:''});
   const [fundAmount,setFundAmount]=useState('');
   const [fundRequests,setFundRequests]=useState([]);
+  const [authEmail,setAuthEmail]=useState('');
+  const [authPassword,setAuthPassword]=useState('');
+  const [authToken,setAuthToken]=useState('');
+  const [authUser,setAuthUser]=useState(null);
+  const [adminOverview,setAdminOverview]=useState(null);
+  const [adminUsers,setAdminUsers]=useState([]);
+  const [adminSearch,setAdminSearch]=useState('');
+  const [adminLoading,setAdminLoading]=useState(false);
 
   const refreshQuotes=async()=>{
     setLoading(true);
@@ -95,6 +103,39 @@ function App(){
   const visible=active==='Watchlist'?filtered.filter(q=>watchlist.includes(q.symbol)):filtered;
   const go=page=>{setActive(page);setMenuOpen(false);setNotice('');};
   const toggleWatch=s=>setWatchlist(old=>old.includes(s)?old.filter(x=>x!==s):[...old,s]);
+  const tokenHeaders=()=>({'Content-Type':'application/json',...(authToken?{Authorization:'Bearer '+authToken}:{})});
+  const adminLogin=async e=>{
+    e.preventDefault();setAdminLoading(true);setNotice('');
+    try{
+      const response=await fetch(API+'/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:authEmail,password:authPassword})});
+      const data=await response.json();if(!response.ok)throw new Error(data.error||'Login failed');
+      if(data.user?.role!=='admin')throw new Error('This account does not have admin permission.');
+      setAuthToken(data.token);setAuthUser(data.user);setNotice('Admin login successful.');setAuthPassword('');
+    }catch(e){setNotice(e.message||'Admin login failed.');setAuthToken('');setAuthUser(null);}
+    finally{setAdminLoading(false);}
+  };
+  const loadAdmin=async()=>{
+    if(!authToken||authUser?.role!=='admin')return;
+    setAdminLoading(true);
+    try{
+      const headers=tokenHeaders();
+      const [over,users]=await Promise.all([
+        fetch(API+'/admin/overview',{headers}).then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||'Admin overview unavailable');return d;}),
+        fetch(API+'/admin/users?limit=50&search='+encodeURIComponent(adminSearch),{headers}).then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||'Users unavailable');return d;})
+      ]);
+      setAdminOverview(over);setAdminUsers(users.users||[]);setNotice('');
+    }catch(e){setNotice(e.message||'Could not load admin data. Check that the latest backend has deployed.');}
+    finally{setAdminLoading(false);}
+  };
+  const changeUserStatus=async(id,status)=>{
+    try{
+      const res=await fetch(API+'/admin/users/'+encodeURIComponent(id)+'/status',{method:'PATCH',headers:tokenHeaders(),body:JSON.stringify({status})});
+      const data=await res.json();if(!res.ok)throw new Error(data.error||'Status update failed');
+      setAdminUsers(prev=>prev.map(u=>u.id===id?{...u,...data.user}:u));setNotice('User status updated.');
+      const over=await fetch(API+'/admin/overview',{headers:tokenHeaders()}).then(r=>r.json());if(over.users)setAdminOverview(over);
+    }catch(e){setNotice(e.message||'Status update failed.');}
+  };
+
   const trade=s=>{setSymbol(s);go('Orders');setNotice('Demo ticket only. No real order will be sent.');};
   const submitDemo=e=>{
     e.preventDefault();
@@ -106,12 +147,12 @@ function App(){
     setOrders(old=>[order,...old]);
     setNotice('Demo order saved on this device only. No broker order or money movement occurred.');
   };
-  const nav=['Overview','Markets','Watchlist','Portfolio','Orders','Wallet','Deposit','Withdraw','Profile'];
+  const nav=['Overview','Markets','Watchlist','Portfolio','Orders','Wallet','Deposit','Withdraw','Profile','Admin'];
   return <div className="app-shell">
     <aside className={'sidebar '+(menuOpen?'show':'')}>
       <div className="brand"><div className="brand-mark">B</div><span>Bharat<span className="brand-light">Trade</span></span><button className="icon-btn mobile-close" onClick={()=>setMenuOpen(false)}><X size={18}/></button></div>
       <div className="workspace-label">TRADING WORKSPACE</div>
-      {nav.map((n,i)=><button key={n} onClick={()=>go(n)} className={'nav-item '+(active===n?'selected':'')}>{[<LayoutDashboard/>,<LineChart/>,<Activity/>,<Wallet/>,<ArrowUpRight/>,<Wallet/>,<ArrowUpRight/>,<ArrowUpRight/>,<Activity/>][i]}<span>{n}</span></button>)}
+      {nav.filter(n=>n!=='Admin'||authUser?.role==='admin').map(n=><button key={n} onClick={()=>go(n)} className={'nav-item '+(active===n?'selected':'')}>{n==='Admin'?<ShieldCheck size={18}/>: [<LayoutDashboard/>,<LineChart/>,<Activity/>,<Wallet/>,<ArrowUpRight/>,<Wallet/>,<ArrowUpRight/>,<ArrowUpRight/>,<Activity/>][nav.filter(x=>x!=='Admin').indexOf(n)]}<span>{n}</span></button>)}
       <div className="sidebar-bottom"><div className="secure-card"><ShieldCheck size={20}/><b>Security first</b><p>Broker credentials belong on the backend, never in the browser.</p></div><div className="user-row"><div className="avatar">BT</div><div><b>Trader account</b><small>Broker not connected</small></div><ChevronDown size={16}/></div></div>
     </aside>
     <main className="main">
@@ -134,6 +175,18 @@ function App(){
         {active==='Wallet'&&<section className="wallet-grid"><div className="metric-card"><div className="metric-head">Available balance</div><h2>₹—</h2><span className="neutral-pill">Real account not connected</span><p className="muted">A verified backend wallet is required to show a real balance.</p><button className="primary-btn" onClick={()=>go('Deposit')}>Add money</button> <button className="secondary-btn" onClick={()=>go('Withdraw')}>Withdraw</button></div><div className="market-panel"><div className="panel-header"><div><h3>Wallet activity</h3><p className="muted">Local demo requests only</p></div></div>{fundRequests.length===0?<div className="empty-state"><b>No requests yet</b><p>Payment processing is not connected; no money can move.</p></div>:<div className="table-wrap"><table><thead><tr><th>Type</th><th>Amount</th><th>Status</th><th>Date</th></tr></thead><tbody>{fundRequests.map(x=><tr key={x.id}><td>{x.type}</td><td>{money(x.amount)}</td><td>LOCAL DEMO</td><td>{x.time}</td></tr>)}</tbody></table></div>}</div></section>}
         {(active==='Deposit'||active==='Withdraw')&&<section className="market-panel funds-panel"><div className="panel-header"><div><h3>{active==='Deposit'?'Add money':'Withdraw funds'}</h3><p className="muted">Demo request form</p></div><span className="neutral-pill">NOT LIVE</span></div><div className="fund-warning"><b>Important: submitting only saves a local demo request. No payment or transfer occurs.</b></div><form className="order-form" onSubmit={e=>{e.preventDefault();const n=Number(fundAmount);if(!Number.isFinite(n)||n<1){setNotice('Enter a valid amount greater than zero.');return;}setFundRequests(old=>[{id:Date.now(),type:active,amount:n,time:new Date().toLocaleString()},...old]);setFundAmount('');setNotice('Demo request saved locally. No money was moved.');go('Wallet');}}><label htmlFor="fund-amount">Amount (INR)</label><input id="fund-amount" type="number" min="1" step="1" value={fundAmount} onChange={e=>setFundAmount(e.target.value)} required/><button className="primary-btn" type="submit">Save demo request</button><p className="form-disclaimer">Real deposits/withdrawals require a payment provider and secure backend integration.</p></form></section>}
         {active==='Profile'&&<section className="market-panel profile-panel"><div className="panel-header"><div><h3>Profile settings</h3><p className="muted">Saved on this device</p></div><div className="avatar">{(profile.name||'T').slice(0,1).toUpperCase()}</div></div><form className="order-form" onSubmit={e=>{e.preventDefault();try{localStorage.setItem('bt-profile',JSON.stringify(profile));setNotice('Profile saved on this device.');}catch{setNotice('Could not save profile.');}}}><label htmlFor="profile-name">Display name</label><input id="profile-name" value={profile.name} onChange={e=>setProfile({...profile,name:e.target.value})} required/><label htmlFor="profile-email">Email</label><input id="profile-email" type="email" value={profile.email} onChange={e=>setProfile({...profile,email:e.target.value})} placeholder="you@example.com"/><label htmlFor="profile-phone">Phone</label><input id="profile-phone" value={profile.phone} onChange={e=>setProfile({...profile,phone:e.target.value})} placeholder="Phone number"/><button className="primary-btn" type="submit">Save profile</button><p className="form-disclaimer">This is not a login or verified account. Profile data is stored in this browser only.</p></form></section>}
+
+        {active==='Admin'&&<section className="admin-page">
+          {!authToken||authUser?.role!=='admin'?<div className="market-panel admin-login"><div className="panel-header"><div><h3>Administrator sign in</h3><p className="muted">Sign in with an account whose role is admin.</p></div><ShieldCheck size={22}/></div><form className="order-form" onSubmit={adminLogin}><label htmlFor="admin-email">Admin email</label><input id="admin-email" type="email" autoComplete="username" value={authEmail} onChange={e=>setAuthEmail(e.target.value)} required/><label htmlFor="admin-password">Password</label><input id="admin-password" type="password" autoComplete="current-password" value={authPassword} onChange={e=>setAuthPassword(e.target.value)} required/><button className="primary-btn" type="submit" disabled={adminLoading}>{adminLoading?'Signing in…':'Sign in'}</button><p className="form-disclaimer">Admin privileges must be assigned securely by the database owner. Ordinary user registration cannot grant admin access.</p></form></div>
+          :<><div className="admin-toolbar"><div><h2>Administration</h2><p className="muted">Signed in as {authUser.email}</p></div><div className="admin-toolbar-actions"><button className="secondary-btn" onClick={loadAdmin} disabled={adminLoading}><RefreshCw size={15}/> Refresh</button><button className="secondary-btn" onClick={()=>{setAuthToken('');setAuthUser(null);setAdminOverview(null);setAdminUsers([]);setNotice('Admin signed out.');}}>Sign out</button></div></div>
+          {adminOverview&&<div className="metrics admin-metrics"><div className="metric-card"><div className="metric-head">Total users</div><h2>{adminOverview.users?.total??'—'}</h2></div><div className="metric-card"><div className="metric-head">Active users</div><h2>{adminOverview.users?.active??'—'}</h2></div><div className="metric-card"><div className="metric-head">Suspended</div><h2>{adminOverview.users?.suspended??'—'}</h2></div><div className="metric-card"><div className="metric-head">Admin accounts</div><h2>{adminOverview.users?.admins??'—'}</h2></div></div>}
+          {adminOverview&&<div className="market-panel admin-status-panel"><div className="panel-header"><div><h3>Integration status</h3><p className="muted">Backend-reported service configuration</p></div></div><div className="admin-integration-grid"><div><span>Trading</span><b>{adminOverview.trading?.liveTradingEnabled?'Connected':'Not configured'}</b></div><div><span>Deposits</span><b>{adminOverview.payments?.liveDepositsEnabled?'Enabled':'Not configured'}</b></div><div><span>Withdrawals</span><b>{adminOverview.payments?.liveWithdrawalsEnabled?'Enabled':'Not configured'}</b></div><div><span>Audit events</span><b>{adminOverview.auditEvents??0}</b></div></div></div>}
+          <div className="market-panel admin-users-panel"><div className="panel-header"><div><h3>User management</h3><p className="muted">Search users and activate or suspend accounts</p></div><div className="admin-search-row"><input value={adminSearch} onChange={e=>setAdminSearch(e.target.value)} placeholder="Search by email" onKeyDown={e=>{if(e.key==='Enter')loadAdmin();}}/><button className="secondary-btn" onClick={loadAdmin} disabled={adminLoading}>Search</button></div></div>
+          {!adminOverview&&<div className="empty-state"><b>Load admin data</b><p>Tap refresh to fetch users and integration status from the backend.</p><button className="primary-btn" onClick={loadAdmin} disabled={adminLoading}>Load data</button></div>}
+          {adminOverview&&<div className="table-wrap"><table><thead><tr><th>User</th><th>Role</th><th>Status</th><th>Joined</th><th>Action</th></tr></thead><tbody>{adminUsers.map(u=><tr key={u.id}><td>{u.email}</td><td>{u.role}</td><td><span className={u.status==='suspended'?'neutral-pill':'positive-pill'}>{u.status||'active'}</span></td><td>{u.createdAt?new Date(u.createdAt).toLocaleDateString():'—'}</td><td>{u.role==='admin'?<span className="muted">Protected admin</span>:<button className="small-action" onClick={()=>changeUserStatus(u.id,u.status==='suspended'?'active':'suspended')}>{u.status==='suspended'?'Activate':'Suspend'}</button>}</td></tr>)}</tbody></table>{adminUsers.length===0&&<div className="empty-state"><b>No matching users</b></div>}</div>}</div>
+          </>}
+        </section>}
+
         <footer><span>© 2026 BharatTrade</span><span><ShieldCheck size={14}/> Secure by design</span><span className="footer-disclaimer">Trading involves risk. This starter is not investment advice.</span></footer>
       </div>
     </main>
