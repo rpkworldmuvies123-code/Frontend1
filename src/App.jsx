@@ -32,24 +32,54 @@ function App(){
 
   const refreshQuotes=async()=>{
     setLoading(true);
+    setNotice('');
+    const symbols=[
+      {symbol:'NIFTY 50',name:'Nifty 50',yahoo:'^NSEI'},
+      {symbol:'SENSEX',name:'BSE Sensex',yahoo:'^BSESN'},
+      {symbol:'BANKNIFTY',name:'Nifty Bank',yahoo:'^NSEBANK'},
+      {symbol:'RELIANCE',name:'Reliance Industries',yahoo:'RELIANCE.NS'},
+      {symbol:'TCS',name:'Tata Consultancy Services',yahoo:'TCS.NS'},
+      {symbol:'INFY',name:'Infosys',yahoo:'INFY.NS'}
+    ];
     try{
-      const response=await fetch(API+'/market/quotes');
-      if(!response.ok) throw new Error('API unavailable');
-      const data=await response.json();
-      const rows=data.quotes||data.data||[];
-      if(rows.length){
-        setQuotes(rows.map(q=>({symbol:q.symbol||q.ticker||'—',name:q.name||q.symbol||'Market quote',price:Number(q.price??q.lastPrice??q.value??0),change:Number(q.changePercent??q.change??0)})));
-        setStatus(data.isLive?'Live market data':'Provider data — verify source');
+      const results=await Promise.allSettled(symbols.map(async item=>{
+        const url='https://proxy.cors.dev/https://query1.finance.yahoo.com/v8/finance/chart/'+encodeURIComponent(item.yahoo)+'?range=1d&interval=1d';
+        const response=await fetch(url,{headers:{Accept:'application/json'},cache:'no-store'});
+        if(!response.ok) throw new Error('Quote request failed');
+        const json=await response.json();
+        const meta=json?.chart?.result?.[0]?.meta;
+        const price=Number(meta?.regularMarketPrice);
+        const previous=Number(meta?.chartPreviousClose??meta?.previousClose);
+        if(!Number.isFinite(price)||price<=0) throw new Error('No quote');
+        return {...item,price,change:previous>0?((price-previous)/previous)*100:0};
+      }));
+      const liveRows=results.filter(x=>x.status==='fulfilled').map(x=>x.value);
+      if(liveRows.length){
+        setQuotes(liveRows);
+        setStatus('Yahoo Finance data · may be delayed');
+        setApiState('Public market API connected');
+        setUpdated(new Date().toLocaleTimeString());
+        if(liveRows.length<symbols.length) setNotice('Some symbols could not load. Only the successfully returned quotes are shown.');
       }else{
-        setStatus('Demo data');
-        setNotice('Backend responded but did not return quotes. Sample values are shown.');
+        throw new Error('Public quote API unavailable');
       }
-      setApiState('Backend connected');
-      setUpdated(new Date().toLocaleTimeString());
     }catch{
-      setStatus('Demo data');
-      setApiState('Backend not connected');
-      setNotice('Could not load market quotes. Sample values are shown, not live prices.');
+      try{
+        const response=await fetch(API+'/market/quotes');
+        if(!response.ok) throw new Error('Backend API unavailable');
+        const data=await response.json();
+        const rows=data.quotes||data.data||[];
+        if(!rows.length) throw new Error('No backend quotes');
+        setQuotes(rows.map(q=>({symbol:q.symbol||q.ticker||'—',name:q.name||q.symbol||'Market quote',price:Number(q.price??q.lastPrice??q.value??0),change:Number(q.changePercent??q.change??0)})));
+        setStatus(data.isLive?'Backend market data':'Backend data — verify source');
+        setApiState('Backend connected');
+        setUpdated(new Date().toLocaleTimeString());
+        setNotice('Public market API was unavailable; showing backend-provided quotes. Verify their source and delay.');
+      }catch{
+        setStatus('Demo data');
+        setApiState('Market API unavailable');
+        setNotice('Public market API did not respond. Displayed sample values are not live prices.');
+      }
     }finally{setLoading(false);}
   };
   useEffect(()=>{refreshQuotes();},[]);
