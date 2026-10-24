@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Activity, ArrowUpRight, Bell, ChevronDown, CircleHelp, Eye, EyeOff, LayoutDashboard, LineChart, Menu, Search, ShieldCheck, Wallet, X, RefreshCw, Star } from 'lucide-react';
 
-const API = (import.meta.env.VITE_API_BASE_URL || 'https://backend-s6ea.onrender.com/api').replace(/\/$/, '');
+const API = (import.meta.env.VITE_API_BASE_URL || 'https://bharattrade-backend.onrender.com/api').replace(/\/$/, '');
 const sampleQuotes = [
   {symbol:'NIFTY 50',name:'Nifty 50',price:24854.05,change:0.72},
   {symbol:'SENSEX',name:'BSE Sensex',price:81745.62,change:0.58},
